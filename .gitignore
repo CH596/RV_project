@@ -1,0 +1,27 @@
+# All data: raw downloads and derived Parquet files (rebuilt by the scripts),
+# except the small daily RV series
+data/*
+*.parquet
+!data/rv_daily_tau0.parquet
+*.zip
+*.log
+
+# PDFs: papers and compiled write-ups
+*.pdf
+
+# LaTeX build files
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.toc
+*.synctex.gz
+
+# Python / macOS
+__pycache__/
+.DS_Store
+
+# Kept locally, never pushed
+time_series_reading.tex
+hiring_intelligence/

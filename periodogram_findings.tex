@@ -1,0 +1,172 @@
+\documentclass[11pt]{article}
+\pdfoutput=1
+
+\usepackage{amsmath,amssymb}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage[small]{caption}
+\usepackage[svgnames,dvipsnames,x11names,table]{xcolor}
+\usepackage{booktabs}
+\usepackage{microtype}
+\usepackage[framemethod=default]{mdframed}
+
+\setlength{\textwidth}{460pt}
+\setlength{\topmargin}{-1.2cm}
+\setlength{\textheight}{640pt}
+\setlength{\oddsidemargin}{10pt}
+\linespread{1.1}
+
+\numberwithin{equation}{section}
+
+\newmdenv[skipabove=7pt,skipbelow=7pt,rightline=false,leftline=false,
+topline=false,bottomline=false,backgroundcolor=blue!6,linecolor=blue!40,
+innerleftmargin=6pt,innerrightmargin=6pt,innertopmargin=5pt,innerbottommargin=5pt,
+leftmargin=0cm,rightmargin=0cm,linewidth=3pt]{IntuitionBox}
+
+\newmdenv[skipabove=7pt,skipbelow=10pt,rightline=false,leftline=false,
+topline=false,bottomline=false,backgroundcolor=green!6,linecolor=green!30!black,
+innerleftmargin=6pt,innerrightmargin=6pt,innertopmargin=5pt,innerbottommargin=5pt,
+leftmargin=0cm,rightmargin=0cm,linewidth=3pt]{TakeawayBox}
+
+\title{Periodicity in BTC Daily Realized Volatility:\\ Periodogram Findings}
+\author{}
+\date{2026-10-20}
+
+\begin{document}
+\maketitle
+
+\noindent\textbf{Data.} BTCUSDT daily log realized volatility $\log RV_t^{(d)}$ from 5-minute log returns $r_t = p(t) - p(t-\Delta)$, days starting 00:00 UTC ($\tau = 0$), 2022-01-02 to 2026-09-30, $n = 1733$ consecutive days with no gaps. Produced by \texttt{compute\_rv.py}; every number and figure below comes from \texttt{periodogram\_findings.py}.
+
+\begin{TakeawayBox}
+\textbf{Summary.}
+\begin{enumerate}
+\item The only clear cycle is \textbf{weekly}. It shows up as peaks at periods of 7, 3.5 and 2.33 days; the last two are harmonics of the week, not separate cycles.
+\item The weekly cycle is a \textbf{weekend dip}: Saturday is about 0.47 below the mean in log RV (roughly 37\% lower RV), Sunday about 0.24 below, and the five weekdays are nearly flat. Weekday means explain \textbf{22\%} of the variance of log RV.
+\item Removing weekday means removes all three weekly peaks. What is left at long periods is a rising background (long memory) with no peak that survives a correction for the number of frequencies tested. The strongest, at 35.4 days, is borderline.
+\end{enumerate}
+\end{TakeawayBox}
+
+\section{The periodogram}
+
+For the demeaned series $x_t = \log RV_t - \overline{\log RV}$, $t = 0,\dots,n-1$, the periodogram at the Fourier frequencies $f_k = k/n$ (cycles per day) is
+\begin{equation}
+I(f_k) = \frac{1}{n}\Bigl|\sum_{t=0}^{n-1} x_t\, e^{-2\pi i f_k t}\Bigr|^2 ,
+\end{equation}
+plotted against period $1/f_k$ for periods of 2 to 90 days. Two properties matter for reading it:
+\begin{itemize}
+\item \textbf{Each ordinate is noisy.} For a stationary series, $I(f_k)/S(f_k)$ is approximately exponential with mean 1, where $S$ is the true spectrum. A single ordinate 3 times the local level happens with probability $e^{-3} \approx 0.05$ by chance, so isolated spikes of that size are expected.
+\item \textbf{Resolution is coarse at long periods.} Frequencies are spaced $1/n$ apart, so neighbouring periods near 90 days are $n/19 \approx 91$ and $n/20 \approx 87$ days. Peaks between 30 and 90 days cannot be located precisely.
+\end{itemize}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.92\textwidth]{periodogram_before_after.png}
+\caption{Periodogram of log RV (top) and of log RV after subtracting the mean for each day of the week (bottom). Log scale. The three weekly peaks are labelled in the top panel and vanish in the bottom one; the rest of the spectrum is unchanged.}
+\label{fig:periodogram}
+\end{figure}
+
+\section{The weekly cycle and its harmonics}
+
+The top panel of Figure~\ref{fig:periodogram} has three spikes far above the background:
+
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+period (days) & 7 & 3.5 & 2.33 \\
+cycles per week $k$ & 1 & 2 & 3 \\
+\midrule
+power, log RV & 18.03 & 12.37 & 3.44 \\
+power, after removing weekday means & 0.118 & 0.027 & 0.029 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The background near these periods is about 0.1, so the raw peaks are 30 to 180 times the background. Removing weekday means brings all three back to background level.
+
+\subsection{Why the harmonics appear}
+
+Any pattern that repeats every 7 days can be written exactly as a sum of sines at $k/7$ cycles per day, i.e.\ at periods $7/k$. With daily data only $k = 1, 2, 3$ are distinct: the shortest observable period is 2 days (Nyquist), and $k = 4, 5, 6$ alias onto $3, 2, 1$. So a weekly pattern of \emph{any} shape lives entirely at periods 7, 3.5 and 2.33 days.
+
+\begin{IntuitionBox}
+\textbf{Intuition.} The periodogram asks, frequency by frequency, how well a sine of that period lines up with the data. A sine whose period does not divide the week drifts against the calendar, so it matches the weekend dip in some weeks and clashes with it in others, and the matches cancel. A sine with period 3.5 or 2.33 days completes exactly 2 or 3 cycles per week, sits at the same place relative to the weekdays every week, and its match accumulates.
+
+Whether those harmonics actually carry power depends on the \emph{shape} of the weekly pattern. A smooth sine-shaped week would give a single peak at 7 days. A flat Monday--Friday followed by a sharp two-day drop cannot be built from one sine per week; the faster sines are needed to sharpen the drop and flatten the weekdays, so they show up as peaks.
+\end{IntuitionBox}
+
+\subsection{The weekday profile}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.75\textwidth]{periodogram_weekday.png}
+\caption{Mean of demeaned log RV by day of the week (UTC).}
+\label{fig:weekday}
+\end{figure}
+
+Figure~\ref{fig:weekday} shows the profile directly. Monday to Friday sit between $+0.13$ and $+0.17$; Saturday is $-0.47$ and Sunday $-0.24$. Sunday is less quiet than Saturday, plausibly because the end of the UTC Sunday overlaps the start of the trading week (CME bitcoin futures reopen Sunday evening US time, and Asian markets open early Monday local time).
+
+The relative power that this profile puts at the three harmonics matches the periodogram's ordering, and is close to an idealised ``low on Saturday and Sunday, flat otherwise'' block:
+
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+relative power at period & 7 & 3.5 & 2.33 \\
+\midrule
+empirical weekday profile & 1.00 & 0.45 & 0.13 \\
+idealised weekend block & 1.00 & 0.48 & 0.06 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Long periods (20--90 days)}
+
+After removing weekday means, the six largest ordinates with periods of at least 20 days are below. ``Ratio'' is the ordinate divided by the mean of its neighbours (excluding the immediately adjacent ones), and $P$ is $e^{-\text{ratio}}$, the chance of a ratio that large at one frequency under no periodicity.
+
+\begin{center}
+\begin{tabular}{cccc}
+\toprule
+period (days) & power & ratio to local background & $P$ (single frequency) \\
+\midrule
+35.4 & 4.05 & 7.0 & 0.001 \\
+59.8 & 2.28 & 3.1 & 0.044 \\
+36.9 & 2.06 & 2.5 & 0.080 \\
+52.5 & 1.81 & 2.5 & 0.083 \\
+69.3 & 1.76 & 2.7 & 0.068 \\
+30.4 & 1.48 & 3.4 & 0.032 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+There are 67 Fourier frequencies with periods between 20 and 90 days. Testing all of them, the chance that at least one reaches $P = 0.001$ is about $1 - 0.999^{67} \approx 0.065$, and several reaching $P \approx 0.05$ is expected. So:
+\begin{itemize}
+\item \textbf{35.4 days} is the only candidate, and it is borderline (family-wise $p \approx 0.07$). It is not a multiple of anything obvious; its neighbour at 36.9 days is also somewhat elevated, which could mean a broad bump rather than a sharp cycle.
+\item \textbf{30.4 days} equals the average calendar month ($365.25/12$), which makes it a natural hypothesis (for example monthly futures and options expiries). On its own the periodogram gives no real evidence for it ($P = 0.03$ at one of 67 frequencies). A direct test, such as an expiry-day dummy in the RV regression, would be more informative than the spectrum.
+\item The rest is the \textbf{rising background}: power grows towards longer periods, the frequency-domain view of the slowly decaying autocorrelation (long memory, or the HAR-type persistence Corsi models).
+\end{itemize}
+
+\section{Effect on the autocorrelation}
+
+The weekly cycle also explains the spikes at lags 7, 14, 21, \dots\ in the autocorrelation of log RV. After removing weekday means the autocorrelation decays smoothly: it falls at multiples of 7 (the weekly echo is gone) and rises at every other lag, because the weekly swings no longer act as noise:
+
+\begin{center}
+\begin{tabular}{lccccccc}
+\toprule
+lag (days) & 1 & 5 & 7 & 14 & 22 & 30 & 66 \\
+\midrule
+log RV & 0.61 & 0.30 & 0.57 & 0.46 & 0.25 & 0.13 & 0.01 \\
+log RV minus weekday means & 0.72 & 0.48 & 0.45 & 0.31 & 0.26 & 0.26 & 0.14 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Implications for modelling}
+
+\begin{TakeawayBox}
+\begin{itemize}
+\item Handle the weekly cycle explicitly before or inside the HAR model: either day-of-week dummies, or sines and cosines at $k = 1, 2, 3$ cycles per week. The two are equivalent and both absorb all three periodogram peaks.
+\item Do not add a separate 3.5-day or 2.33-day term; they are part of the weekly pattern.
+\item The HAR horizons were set for equity markets (5 and 22 trading days). For a market that trades every day, 7 and 30 calendar days are the natural weekly and monthly horizons; with the weekly cycle removed, the choice between them should be made on forecast performance.
+\item There is no strong evidence for any cycle longer than a week. The 35.4-day peak is worth re-checking on a longer sample or with a smoothed (e.g.\ Welch) spectrum before treating it as real.
+\end{itemize}
+\end{TakeawayBox}
+
+\end{document}
