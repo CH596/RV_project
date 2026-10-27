@@ -1,0 +1,194 @@
+PHASE 2 FINDINGS: OUT-OF-SAMPLE EVALUATION OF logHAR FORECASTS OF BTC RV
+=========================================================================
+Run 2026-10-26. Code: phase2_oos.py (+ har.py), input data/rv_daily_tau0.parquet.
+Regenerate the tables in section 4 with:  python3 phase2_oos.py
+Section 6 comes from compute_rv.py (needs the 1-minute data).
+
+
+1. DESIGN (fixed 2026-10-26, before any results; see ts_project_plan.md)
+------------------------------------------------------------------------
+- Target: next-day log RV (log of daily realized volatility, 5-min returns, day from 00:00 UTC).
+- Test: 1,003 one-day-ahead forecasts, origins t = 2024-01-01 .. 2026-09-29,
+  targets t+1 = 2024-01-02 .. 2026-09-30. Same test days for every model.
+- Refit at every origin on rows whose target is known at t (rows s <= t-1).
+- Window: rolling, last 700 usable rows (main); expanding (robustness).
+  Training rows at the first origin: 700 for models 1-4, 640 for model 5, 365 for model 6
+  (the 90- and 365-day averages need more history: a handicap for models 5 and 6).
+- Models:
+    1 random walk         tomorrow = today
+    2 seasonal naive      the target's weekday one week earlier (day t-6)
+    3 HAR (d, w, m)            plain HAR, horizons 1, 7, 30 days
+    4 HAR (d, w, m) + DoW      + target-day weekday dummies (Monday baseline)  <- carried forward
+    5 HAR (d, w, m, q) + DoW   + quarterly average, 90 days (rv_q)
+    6 HAR (d, w, m, y) + DoW   + yearly average, 365 days (rv_y)
+  Regressors: rv_d, rv_w, rv_m, rv_q, rv_y. The names give the horizon, not a mechanism.
+  The 90-day term was added for a statistical reason: it is the next rung on the
+  1 -> 7 -> 30 ladder of timescales, and the weekday-adjusted ACF is still about 0.14 at
+  lags 50-70. A behavioural link (quarterly futures expiries on CME and the major
+  exchanges) is possible, but it was not the motivation and was not tested. The 365-day
+  term is a drift check: a yearly average acts like a slowly moving intercept, a
+  competitor to the rolling window.
+- Losses: MSE on log RV (primary); QLIKE on variance, mean of s2/h - log(s2/h) - 1
+  (secondary); MAE and MSE on variance (supplementary).
+- Variance forecast: h = exp(2 yhat) x smearing factor (mean of exp(2u) over training
+  residuals). The Gaussian factor exp(2 s^2) is reported as a diagnostic.
+- Diebold-Mariano: d = loss(A) - loss(B), Newey-West variance (Bartlett, 6 lags by the
+  rule floor(4 (n/100)^(2/9)) with n = 1,003), two-sided normal p-values.
+
+Choices made where the design left room (decided before the run; to confirm):
+- "Test period" read as forecast origins, so the last target is 2026-09-30.
+- Benchmarks (1, 2) get their smearing factor from their own errors on the same 700
+  training rows as the HAR models.
+- "Levels" losses computed on the variance scale (s2 vs h).
+
+
+2. MAIN FINDINGS (rolling window)
+---------------------------------
+1. The weekday dummies help out of sample, by a lot. HAR (d, w, m) + DoW vs HAR (d, w, m):
+   MSE on log RV 0.0746 vs 0.1354 (-45%), DM -12.50, p < 0.001;
+   QLIKE 0.1918 vs 0.2741 (-30%), DM -7.64, p < 0.001.
+   The in-sample gain (R^2 0.43 -> 0.65) carries over to forecasting.
+2. Model 4 beats both naive benchmarks easily: MSE 0.40x the random walk's, QLIKE 0.52x.
+   Model 2 vs model 4: DM +8.94 (MSE), +6.73 (QLIKE).
+3. Longer horizons add nothing. Model 4 vs 5 (+ rv_q): DM -1.14 (MSE), -0.46 (QLIKE);
+   model 4 vs 6 (+ rv_y): DM -1.49, -1.05. Both point estimates slightly favour model 4.
+   With the 700-day rolling window, a slow-moving term is not needed. So the quarterly
+   term gives no support to a quarterly (futures-expiry) effect either.
+4. Seasonal naive vs random walk: a tie on MSE (DM +0.25, p 0.80), but the seasonal naive
+   is worse on QLIKE (DM -1.92, p 0.055, i.e. the random walk is better). Copying last
+   week's same weekday captures the season but throws away the persistence.
+5. Rolling vs expanding: almost identical (model 4 MSE 0.0746 vs 0.0750, QLIKE 0.1918 vs
+   0.1924). Every conclusion above holds under the expanding window.
+6. Back-transform diagnostic: the Gaussian factor gives slightly lower QLIKE than smearing
+   for every model (model 4: 0.1884 vs 0.1918). The mean factors are 1.30 (smearing) vs
+   1.19 (Gaussian), so smearing gives larger variance forecasts. A sentence for the
+   write-up, not a design change.
+7. Rolling coefficient paths of HAR (d, w, m) + DoW (700-row fits, section 5):
+   - beta_d dips to 0.39 (Dec 2024), then rises to 0.55 by Sep 2026.
+   - beta_w drifts down, 0.34 -> 0.25; beta_m stays small, 0.03 to 0.16, its band
+     always covering zero.
+   - Saturday deepens, -0.72 -> -0.91, outside the earlier +-2 SE band.
+   - Sunday falls to -0.40 (Feb 2025), then recovers to -0.24.
+   - Weekday shifts move more than the HAR betas, which supports the rolling window.
+
+
+3. NOTES
+--------
+- The out-of-sample MSE of model 4 (0.075) is below the full-sample in-sample residual
+  variance (0.293^2 = 0.086). This is not a red flag: 2024-26 is calmer (per-year
+  in-sample residual sd 0.27, 0.28, 0.26 vs 0.33 in 2023).
+- Look-ahead check: replacing every day after an origin with random values leaves all
+  forecasts made at that origin unchanged.
+
+
+4. TABLES (output of phase2_oos.py)
+-----------------------------------
+Test origins: 1003 (2024-01-01 to 2026-09-29), targets to 2026-09-30
+
+==== rolling window, last 700 usable rows (main) ====
+Training rows at the first origin: 1: 700, 2: 700, 3: 700, 4: 700, 5: 640, 6: 365
+
+Primary (MSE on log RV) and secondary (QLIKE on variance) losses, test-day means.
+QLIKE gauss uses the Gaussian factor e^{2 s^2} instead of smearing (diagnostic);
+smear and gauss are the mean back-transform factors.
+                          MSE log  MSE rel RW   QLIKE  QLIKE rel RW  QLIKE gauss   smear   gauss     n
+model                                                                                                 
+1 random walk              0.1872      1.0000  0.3709        1.0000       0.3660  1.5611  1.4907  1003
+2 seasonal naive           0.1832      0.9784  0.4591        1.2379       0.4462  1.7268  1.5105  1003
+3 HAR (d, w, m)            0.1354      0.7233  0.2741        0.7391       0.2707  1.4112  1.3360  1003
+4 HAR (d, w, m) + DoW      0.0746      0.3987  0.1918        0.5172       0.1884  1.2971  1.1923  1003
+5 HAR (d, w, m, q) + DoW   0.0747      0.3991  0.1920        0.5176       0.1887  1.2970  1.1927  1003
+6 HAR (d, w, m, y) + DoW   0.0753      0.4024  0.1932        0.5210       0.1906  1.3057  1.1938  1003
+
+Supplementary: losses on the variance scale (sigma^2 vs h).
+                          MAE var x1e4  MSE var x1e8  MAE rel RW  MSE rel RW
+model                                                                       
+1 random walk                   6.0831      174.5960      1.0000      1.0000
+2 seasonal naive                7.7576      273.0806      1.2753      1.5641
+3 HAR (d, w, m)                 3.7237       54.6864      0.6121      0.3132
+4 HAR (d, w, m) + DoW           3.3809       49.5247      0.5558      0.2837
+5 HAR (d, w, m, q) + DoW        3.3741       49.4350      0.5547      0.2831
+6 HAR (d, w, m, y) + DoW        3.3849       49.4586      0.5564      0.2833
+
+Diebold-Mariano, d = loss(A) - loss(B); negative = A better.
+  mse_log  1 random walk            vs 2 seasonal naive          mean d +0.0040  DM  +0.25  p 0.803  (NW lags 6)
+  mse_log  2 seasonal naive         vs 4 HAR (d, w, m) + DoW     mean d +0.1085  DM  +8.94  p 0.000  (NW lags 6)
+  mse_log  4 HAR (d, w, m) + DoW    vs 5 HAR (d, w, m, q) + DoW  mean d -0.0001  DM  -1.14  p 0.255  (NW lags 6)
+  mse_log  4 HAR (d, w, m) + DoW    vs 3 HAR (d, w, m)           mean d -0.0608  DM -12.50  p 0.000  (NW lags 6)
+  mse_log  4 HAR (d, w, m) + DoW    vs 6 HAR (d, w, m, y) + DoW  mean d -0.0007  DM  -1.49  p 0.135  (NW lags 6)
+  qlike    1 random walk            vs 2 seasonal naive          mean d -0.0882  DM  -1.92  p 0.055  (NW lags 6)
+  qlike    2 seasonal naive         vs 4 HAR (d, w, m) + DoW     mean d +0.2673  DM  +6.73  p 0.000  (NW lags 6)
+  qlike    4 HAR (d, w, m) + DoW    vs 5 HAR (d, w, m, q) + DoW  mean d -0.0001  DM  -0.46  p 0.645  (NW lags 6)
+  qlike    4 HAR (d, w, m) + DoW    vs 3 HAR (d, w, m)           mean d -0.0823  DM  -7.64  p 0.000  (NW lags 6)
+  qlike    4 HAR (d, w, m) + DoW    vs 6 HAR (d, w, m, y) + DoW  mean d -0.0014  DM  -1.05  p 0.295  (NW lags 6)
+
+==== expanding window (robustness) ====
+Training rows at the first origin: 1: 700, 2: 700, 3: 700, 4: 700, 5: 640, 6: 365
+
+Primary (MSE on log RV) and secondary (QLIKE on variance) losses, test-day means.
+QLIKE gauss uses the Gaussian factor e^{2 s^2} instead of smearing (diagnostic);
+smear and gauss are the mean back-transform factors.
+                          MSE log  MSE rel RW   QLIKE  QLIKE rel RW  QLIKE gauss   smear   gauss     n
+model                                                                                                 
+1 random walk              0.1872      1.0000  0.3676        1.0000       0.3647  1.5502  1.4695  1003
+2 seasonal naive           0.1832      0.9784  0.4575        1.2443       0.4423  1.8465  1.5554  1003
+3 HAR (d, w, m)            0.1353      0.7227  0.2739        0.7450       0.2701  1.4216  1.3283  1003
+4 HAR (d, w, m) + DoW      0.0750      0.4006  0.1924        0.5233       0.1875  1.3218  1.2053  1003
+5 HAR (d, w, m, q) + DoW   0.0751      0.4010  0.1927        0.5242       0.1878  1.3289  1.2080  1003
+6 HAR (d, w, m, y) + DoW   0.0752      0.4016  0.1945        0.5290       0.1899  1.3487  1.2086  1003
+
+Supplementary: losses on the variance scale (sigma^2 vs h).
+                          MAE var x1e4  MSE var x1e8  MAE rel RW  MSE rel RW
+model                                                                       
+1 random walk                   6.0076      168.3606      1.0000      1.0000
+2 seasonal naive                8.1876      285.0346      1.3629      1.6930
+3 HAR (d, w, m)                 3.7897       55.0191      0.6308      0.3268
+4 HAR (d, w, m) + DoW           3.4407       49.7290      0.5727      0.2954
+5 HAR (d, w, m, q) + DoW        3.4480       49.8401      0.5739      0.2960
+6 HAR (d, w, m, y) + DoW        3.4640       49.7292      0.5766      0.2954
+
+Diebold-Mariano, d = loss(A) - loss(B); negative = A better.
+  mse_log  1 random walk            vs 2 seasonal naive          mean d +0.0040  DM  +0.25  p 0.803  (NW lags 6)
+  mse_log  2 seasonal naive         vs 4 HAR (d, w, m) + DoW     mean d +0.1082  DM  +8.89  p 0.000  (NW lags 6)
+  mse_log  4 HAR (d, w, m) + DoW    vs 5 HAR (d, w, m, q) + DoW  mean d -0.0001  DM  -0.45  p 0.651  (NW lags 6)
+  mse_log  4 HAR (d, w, m) + DoW    vs 3 HAR (d, w, m)           mean d -0.0603  DM -13.28  p 0.000  (NW lags 6)
+  mse_log  4 HAR (d, w, m) + DoW    vs 6 HAR (d, w, m, y) + DoW  mean d -0.0002  DM  -0.30  p 0.761  (NW lags 6)
+  qlike    1 random walk            vs 2 seasonal naive          mean d -0.0898  DM  -2.28  p 0.023  (NW lags 6)
+  qlike    2 seasonal naive         vs 4 HAR (d, w, m) + DoW     mean d +0.2651  DM  +7.81  p 0.000  (NW lags 6)
+  qlike    4 HAR (d, w, m) + DoW    vs 5 HAR (d, w, m, q) + DoW  mean d -0.0003  DM  -0.66  p 0.510  (NW lags 6)
+  qlike    4 HAR (d, w, m) + DoW    vs 3 HAR (d, w, m)           mean d -0.0815  DM  -8.27  p 0.000  (NW lags 6)
+  qlike    4 HAR (d, w, m) + DoW    vs 6 HAR (d, w, m, y) + DoW  mean d -0.0021  DM  -1.20  p 0.229  (NW lags 6)
+
+
+5. ROLLING COEFFICIENT PATHS, HAR (d, w, m) + DoW (700-row fits; plot: phase2_coef_paths.png)
+---------------------------------------------------------------------------------
+term     first origin  last origin   min (origin)          max (origin)
+         2024-01-01    2026-09-29
+rv_d       0.461         0.550       0.392 (2024-12-16)    0.556 (2026-09-08)
+rv_w       0.344         0.251       0.224 (2025-07-16)    0.375 (2024-10-19)
+rv_m       0.098         0.059       0.033 (2026-08-22)    0.163 (2025-06-28)
+Sat       -0.715        -0.913      -0.914 (2026-09-16)   -0.705 (2024-05-17)
+Sun       -0.277        -0.237      -0.401 (2025-02-24)   -0.234 (2026-07-10)
+
+
+6. IN-SAMPLE YEARLY FITS (compute_rv.py, section 11)
+----------------------------------------------------
+HAR (d, w, m) + DoW on log_rv (horizons 1, 7, 30), one fit per calendar year of row t,
+on the 1,703 common rows. Newey-West standard errors.
+
+       const  const_se     b_d  b_d_se     b_w  b_w_se     b_m  b_m_se    n
+year
+2022  0.0098    0.2707  0.5362  0.0776  0.2999  0.1005  0.1143  0.1142  335
+2023 -0.5630    0.4009  0.4041  0.0698  0.3572  0.1014  0.0309  0.0974  365
+2024 -0.6636    0.3219  0.4540  0.0577  0.2849  0.0799  0.0098  0.1055  366
+2025 -0.2395    0.2708  0.5232  0.0498  0.2795  0.0778  0.0604  0.0847  365
+2026 -0.2849    0.2818  0.5861  0.0951  0.2140  0.1074  0.0516  0.1042  272
+
+Weekday shifts (target day vs Monday):
+        Tue  Tue_se    Wed  Wed_se    Thu  Thu_se    Fri  Fri_se    Sat  Sat_se    Sun  Sun_se
+year
+2022 -0.145   0.071 -0.101   0.063 -0.178   0.068 -0.160   0.070 -0.624   0.067 -0.220   0.050
+2023 -0.223   0.065 -0.104   0.064 -0.192   0.083 -0.219   0.070 -0.794   0.076 -0.328   0.067
+2024 -0.146   0.059 -0.195   0.065 -0.229   0.054 -0.206   0.057 -0.818   0.067 -0.367   0.053
+2025 -0.262   0.050 -0.239   0.052 -0.272   0.058 -0.205   0.070 -0.912   0.058 -0.256   0.064
+2026 -0.282   0.066 -0.214   0.052 -0.231   0.054 -0.237   0.056 -0.918   0.077 -0.200   0.064

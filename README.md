@@ -1,6 +1,8 @@
 # BTC Realized Volatility
 
-Daily realized volatility (RV) of BTCUSDT built from 1-minute Binance prices, as groundwork for forecasting volatility with HAR-type models (Corsi, 2009). The sample runs from 2022-01-02 to 2026-09-30: 1,733 complete days.
+Daily realized volatility (RV) of BTCUSDT built from 1-minute Binance prices, and HAR-type models of it (Corsi, 2009). The sample runs from 2022-01-02 to 2026-09-30: 1,733 complete days.
+
+**Status.** Phase 1 (data, seasonality analysis, in-sample HAR fits) is complete. All results below are **in-sample**. Phase 2, out-of-sample rolling-origin evaluation from 2024-01-01, is in progress.
 
 ## Pipeline
 
@@ -8,10 +10,10 @@ Daily realized volatility (RV) of BTCUSDT built from 1-minute Binance prices, as
 |---|---|---|
 | 1. Download monthly 1-minute klines from Binance's public data site | `download_klines.py` | `data/raw/BTCUSDT-1m-YYYY-MM.zip` |
 | 2. Combine into one file and validate | `build_parquet.py` | `data/btc_1m.parquet` |
-| 3. 5-minute returns → daily RV, weekday adjustment, diagnostics | `compute_rv.py` | `data/rv_daily_tau0.parquet`, `rv_daily_tau0.png` |
+| 3. 5-minute returns → daily RV, weekday adjustment, diagnostics, in-sample HAR fits | `compute_rv.py` | `data/rv_daily_tau0.parquet`, `rv_daily_tau0.png`, fit tables printed to the terminal |
 | 4. Periodogram analysis of the weekly cycle | `periodogram_findings.py` | figures for `periodogram_findings.tex` |
 
-No data is in the repository. Every script reads and writes under `data/` next to the scripts, which the steps above rebuild (about 170 MB in total).
+Every script reads and writes under `data/` next to the scripts. The only data file in the repository is `data/rv_daily_tau0.parquet` (85 KB, the daily RV series), so the modelling steps run without the 1-minute data; steps 1–2 rebuild everything else (about 170 MB).
 
 ### Reproduce
 
@@ -69,18 +71,39 @@ Per-day files go to `data/raw_ibkr/<SYMBOL>_5m/`; holidays are saved as empty fi
 - **Look-ahead caveat:** the weekday means use the whole sample. That's fine for description, but for out-of-sample forecasting, estimate them on the training window only, or include day-of-week dummies in the regression instead.
 - **Calendar horizons:** crypto trades every day, so the natural weekly and monthly horizons are 7 and 30 calendar days. The diagnostics report these alongside Corsi's equity-market horizons of 5, 22 and 66 trading days.
 
+### HAR model
+- **Specification:** log-HAR, $y_{t+1} = c + \beta_d y_t + \beta_w \bar y^{(w)}_t + \beta_m \bar y^{(m)}_t + \varepsilon_{t+1}$ with $y = \log RV$ and $\bar y^{(h)}_t$ the average of $y$ over the $h$ days up to and including $t$.
+- **Horizons:** (1, 7, 30) calendar days as the crypto model; (1, 5, 22), Corsi's equity horizons, as the literature baseline.
+- **Weekly cycle:** dummies for the weekday of the **target** day $t+1$, with Monday as the baseline. The target day's weekday is known at the forecast origin, so this uses no future information, and in a forecasting setting the weekday effects are estimated on the training window automatically. In-sample this is equivalent to fitting HAR on the weekday-adjusted series.
+- **Common sample:** every variant is fitted on the same 1,703 days (2022-01-31 to 2026-09-29), so $R^2$ values are comparable when the target is the same.
+- **Standard errors:** Newey–West (Bartlett kernel), 7 lags by the rule $\lfloor 4(n/100)^{2/9}\rfloor$, because the residuals are autocorrelated.
+
 ### Diagnostics
 - **Autocorrelation:** lags 1 to 70 for log RV and for the weekday-adjusted series, plotted together.
 - **Welch spectrum:** computed for both series and shown on log-log axes. It uses 364-day Hann-windowed segments (52 weeks, so the weekly frequencies fall exactly on the grid) with 50% overlap.
 
 ## Findings so far
 
+All in-sample.
+
 - The only periodic component at periods of 2 to 90 days is the **weekly cycle**. It appears at 7, 3.5 and 2.33 days; the last two are harmonics of the week, produced by the sharp weekend dip. Removing weekday means removes all three.
 - After removing the weekday effect, autocorrelation decays smoothly and slowly (0.72 at lag 1, 0.26 at lag 30, 0.14 at lag 66). The spectrum is close to a power law, consistent with long memory: a rough fit gives d ≈ 0.45.
-- There is no evidence of other cycles at periods of 2 to 90 days. A 35-day peak in the raw periodogram is borderline and isn't separate from the trend in the Welch spectrum.
+- There is no evidence of other cycles at periods of 2 to 90 days. A 35-day peak in the raw periodogram is borderline and doesn't stand out from the background in the Welch spectrum.
+- **Modelling the weekly cycle matters for HAR, in fit and in coefficients.** On the same 1,703 days and the same target (log RV):
+
+  | | plain HAR (1, 7, 30) | + weekday dummies |
+  |---|---|---|
+  | $\beta_d$ | 0.388 | 0.485 |
+  | $\beta_w$ | 0.427 | 0.312 |
+  | $\beta_m$ | 0.051 ($t$ = 1.2) | 0.089 ($t$ = 2.3) |
+  | $R^2$ | 0.428 | **0.648** |
+  | residual s.d. | 0.373 | **0.293** |
+
+  Six calendar dummies cut the residual standard deviation by about 21%. Without them, yesterday's value carries the weekday swing while the 7-day average cancels it, so the plain fit shifts weight from the daily to the weekly term and the monthly term looks insignificant. The weekday shifts (Sat −0.81, Sun −0.28, Tue–Fri about −0.2, relative to Monday) are conditional on the HAR inputs, not raw weekday means.
+- Once the weekly cycle is handled, horizons (1, 7, 30) and (1, 5, 22) fit almost identically.
 - **Not tested:** annual seasonality (under 5 years of data), effects tied to irregular dates (FOMC and CPI releases, holidays, options expiries), and seasonality within the day.
 
-`periodogram_findings.tex` / `.pdf` has the details.
+`periodogram_findings.tex` has the details: the spectral analysis and the full table of HAR fits (compile it with `pdflatex` in this folder; it uses the two `periodogram_*.png` figures).
 
 ## Reference
 

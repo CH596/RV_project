@@ -168,3 +168,116 @@ for a, col, title in ((ax[3], "log_rv", "Welch spectrum of log RV"),
 ax[4].sharey(ax[3])
 fig.savefig(PLOT_FILE, dpi=130)
 print(f"Saved {PLOT_FILE}")
+# ---- 8. logHAR fits ---------------------------------------------------------
+# Corsi (2009) HAR in logs. With windows (1, w, m):
+#   y_{t+1} = b0 + b_d y_t + b_w mean(y_{t-w+1..t}) + b_m mean(y_{t-m+1..t}) + e_{t+1}
+# Row t holds regressors built from days up to and including t; the target is the next
+# day. Rows without a full m-day window or a next day are dropped.
+# OLS, with Newey-West (Bartlett kernel) standard errors as in Corsi.
+def fit_loghar(log_rv, windows, sample=None, day_of_week_dummy=False):
+    """Fit logHAR with (1, w, m) windows; return (coefficient table, residuals by date).
+
+    sample: optional index of dates to fit on (must be a subset of the usable rows).
+    day_of_week_dummy: add dummies for the target day's weekday (Tue..Sun, Monday is the
+        baseline). Needs weekday_mask from section 10.
+    """
+    _, w, m = windows
+    har = pd.DataFrame({
+        "rv_d": log_rv,
+        "rv_w": log_rv.rolling(w).mean(),
+        "rv_m": log_rv.rolling(m).mean(),
+        "target": log_rv.shift(-1),
+    }).dropna()
+    if sample is not None:
+        har = har.loc[sample]
+    regressors = ["rv_d", "rv_w", "rv_m"]
+    if day_of_week_dummy:
+        # Use weekday dummies for the target day. Shift the full mask before picking rows,
+        # so each row gets the next calendar day's weekday and no row is lost. Drop Monday
+        # as the baseline: all seven dummies would sum to the constant.
+        target_weekday = weekday_mask.shift(-1).loc[har.index, WEEKDAYS[1:]].astype(float)
+        har = pd.concat([har, target_weekday], axis=1)
+        regressors += WEEKDAYS[1:]
+    X = np.column_stack([np.ones(len(har)), har[regressors].to_numpy()])
+    y = har["target"].to_numpy()
+    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+    resid = y - X @ beta
+
+    # Newey-West covariance: (X'X)^-1 S (X'X)^-1, S = sum of Bartlett-weighted
+    # autocovariances of x_t e_t. Lag length from the Newey-West (1994) rule of thumb,
+    # so fits on the same number of days use the same lag length.
+    nw_lags = int(4 * (len(har) / 100) ** (2 / 9))
+    Xe = X * resid[:, None]
+    S = Xe.T @ Xe
+    for k in range(1, nw_lags + 1):
+        G = Xe[k:].T @ Xe[:-k]
+        S += (1 - k / (nw_lags + 1)) * (G + G.T)
+    XtX_inv = np.linalg.inv(X.T @ X)
+    se = np.sqrt(np.diag(XtX_inv @ S @ XtX_inv))
+    # Plain OLS standard errors for comparison: sigma^2 (X'X)^-1, which assumes the errors
+    # are homoskedastic and serially uncorrelated.
+    sigma2 = resid @ resid / (len(y) - X.shape[1])
+    ols_se = np.sqrt(np.diag(sigma2 * XtX_inv))
+
+    fit = pd.DataFrame({"coef": beta, "ols_se": ols_se, "nw_se": se, "t": beta / se},
+                       index=["const", "b_d", "b_w", "b_m", *regressors[3:]])
+    print(f"\nlogHAR{tuple(windows)}{' + weekday dummies' if day_of_week_dummy else ''} "
+          f"on {log_rv.name}: {len(har)} obs "
+          f"({har.index[0].date()} to {har.index[-1].date()}), Newey-West lags {nw_lags}")
+    print(fit.round(4).to_string())
+    print(f"  R^2 {1 - resid.var() / y.var():.3f}, residual std {resid.std():.3f}")
+    return fit, pd.Series(resid, index=har.index, name="resid")
+
+
+# Calendar-day horizons (1, 7, 30), since crypto trades every day.
+fit_730, resid_730 = fit_loghar(daily["log_rv_ds"], (1, 7, 30))
+
+# ---- 9. logHAR(1, 5, 22): trading-day horizons, for comparison ---------------
+# Same 1703 days as (1,7,30) (2022-01-31 to 2026-09-29), hence the same Newey-West lag
+# length. The 22-day window fills 8 days sooner than the 30-day one, so without
+# sample= it would keep 1711 days.
+fit_522, resid_522 = fit_loghar(daily["log_rv_ds"], (1, 5, 22), sample=resid_730.index)
+assert resid_522.index.equals(resid_730.index)   # same days, same order
+
+# ---- 10. Weekday masks, for the weekday-dummies variant ----------------------
+# Instead of subtracting weekday_effect beforehand, the dummies variant fits logHAR on
+# log_rv and lets the regression estimate the weekly cycle. One boolean column per
+# weekday (of the window start, as in section 5); exactly one is True on each row.
+# In the regression, use the masks of the TARGET day (shift(-1)) and drop one weekday
+# as the baseline, since the seven columns sum to the constant.
+WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+weekday_mask = pd.DataFrame({name: daily.index.dayofweek == i for i, name in enumerate(WEEKDAYS)},
+                            index=daily.index)
+assert (weekday_mask.sum(axis=1) == 1).all()
+print("\nDays per weekday: " + ", ".join(f"{d} {n}" for d, n in weekday_mask.sum().items()))
+
+# logHAR(1, 7, 30) on log_rv as measured, with the weekly cycle estimated by the dummies,
+# on the same 1703 days as the deseasonalized fit.
+fit_dum, resid_dum = fit_loghar(daily["log_rv"], (1, 7, 30), sample=resid_730.index,
+                                day_of_week_dummy=True)
+fit_raw_730, resid_raw_73 = fit_loghar(daily["log_rv"], (1, 7, 30), sample=resid_730.index)
+assert resid_dum.index.equals(resid_730.index)
+
+# ---- 11. Weekday-dummies logHAR(1, 7, 30), one fit per calendar year -----------
+# Same days as above, split by the year of row t. The 30-day window still reaches back
+# into the previous year, so only the rows are split, not the history behind them.
+# 2022 starts on 2022-01-31 and 2026 ends on 2026-09-29, so those years are shorter.
+by_year = {}
+for year in range(2022, 2027):
+    in_year = resid_730.index[resid_730.index.year == year]
+    fit, _ = fit_loghar(daily["log_rv"], (1, 7, 30), sample=in_year, day_of_week_dummy=True)
+    row = {}
+    for name in ["const", "b_d", "b_w", "b_m", *WEEKDAYS[1:]]:
+        row[name] = fit.loc[name, "coef"]
+        row[f"{name}_se"] = fit.loc[name, "nw_se"]
+    row["n"] = len(in_year)
+    by_year[year] = row
+by_year = pd.DataFrame.from_dict(by_year, orient="index").rename_axis("year")
+by_year["n"] = by_year["n"].astype(int)
+# One table, printed in two blocks so it fits the terminal: HAR terms, then the
+# weekday shifts (target day vs Monday).
+har_cols = [c for name in ["const", "b_d", "b_w", "b_m"] for c in (name, f"{name}_se")]
+day_cols = [c for name in WEEKDAYS[1:] for c in (name, f"{name}_se")]
+print("\nlogHAR(1, 7, 30) + weekday dummies on log_rv, by year (Newey-West standard errors):")
+print(by_year[har_cols + ["n"]].round(4).to_string())
+print(by_year[day_cols].round(3).to_string())
