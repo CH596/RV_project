@@ -186,6 +186,32 @@ for scheme in ("rolling", "expanding"):
             print(f"  {loss:8s} {a:24s} vs {b:24s}  mean d {dbar:+.4f}  DM {stat:+6.2f}  "
                   f"p {p:.3f}  (NW lags {lags})")
 
+# ---- 3b. Breakdown by target year and target weekday (rolling, models 3 and 4) ----
+# Robustness across years and the mechanism behind the dummies' gain: plain HAR's bias by
+# weekday. Grouped by the TARGET day (origin + 1), like the dummies themselves.
+r = fc[fc["scheme"] == "rolling"].copy()
+target_day = r["origin"] + pd.Timedelta("1D")
+r["err"] = r["y"] - r["yhat"]
+r["target year"] = target_day.dt.year
+r["target weekday"] = pd.Categorical(target_day.dt.dayofweek.map(dict(enumerate(har.WEEKDAYS))),
+                                     categories=har.WEEKDAYS, ordered=True)
+PLAIN = "3 HAR (d, w, m)"
+print("\n==== breakdown by target day, rolling window: model 3 (plain HAR) vs model 4 (+ DoW) ====")
+print("err = y - yhat (positive: forecast too low).")
+for key in ("target year", "target weekday"):
+    g3 = r[r["model"] == PLAIN].groupby(key, observed=True)
+    g4 = r[r["model"] == CARRIED].groupby(key, observed=True)
+    brk = pd.DataFrame({
+        "n": g3.size(),
+        "MSE log 3": g3["mse_log"].mean(),
+        "MSE log 4": g4["mse_log"].mean(),
+        "mean err 3": g3["err"].mean(),
+        "mean err 4": g4["err"].mean(),
+    })
+    brk.insert(3, "change", (brk["MSE log 4"] / brk["MSE log 3"] - 1).map("{:+.0%}".format))
+    print()
+    print(brk.round(3).to_string())
+
 # ---- 4. Rolling coefficient paths of the carried model -----------------------
 path = pd.DataFrame(paths)
 fig, ax = plt.subplots(3, 3, figsize=(13, 9), sharex=True, constrained_layout=True)

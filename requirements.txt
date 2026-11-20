@@ -1,0 +1,10 @@
+# Core pipeline and analysis
+requests
+pandas
+pyarrow
+numpy
+scipy
+matplotlib
+
+# Optional: equity download from Interactive Brokers (download_ibkr.py)
+# ib_async

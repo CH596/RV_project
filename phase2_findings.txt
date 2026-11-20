@@ -1,6 +1,7 @@
 PHASE 2 FINDINGS: OUT-OF-SAMPLE EVALUATION OF logHAR FORECASTS OF BTC RV
 =========================================================================
-Run 2026-10-26. Code: phase2_oos.py (+ har.py), input data/rv_daily_tau0.parquet.
+Run 2026-10-26; breakdown by target year and weekday added 2026-11-20 (same run, same
+numbers). Code: phase2_oos.py (+ har.py), input data/rv_daily_tau0.parquet.
 Regenerate the tables in section 4 with:  python3 phase2_oos.py
 Section 6 comes from compute_rv.py (needs the 1-minute data).
 
@@ -70,6 +71,11 @@ Choices made where the design left room (decided before the run; to confirm):
    - Saturday deepens, -0.72 -> -0.91, outside the earlier +-2 SE band.
    - Sunday falls to -0.40 (Feb 2025), then recovers to -0.24.
    - Weekday shifts move more than the HAR betas, which supports the rolling window.
+8. The gain holds in every test year and comes from the weekend (section 4, breakdown).
+   MSE model 3 -> 4 by target year: 2024 -43%, 2025 -44%, 2026 -49%. By target weekday,
+   plain HAR's mean error is +0.26 on Mondays and -0.57 on Saturdays; with the dummies
+   every weekday is within +-0.04. Saturday's MSE falls 0.443 -> 0.117 (-74%), Monday's
+   0.138 -> 0.073 (-47%); Tue-Fri and Sun change by 4-14%.
 
 
 3. NOTES
@@ -158,6 +164,25 @@ Diebold-Mariano, d = loss(A) - loss(B); negative = A better.
   qlike    4 HAR (d, w, m) + DoW    vs 5 HAR (d, w, m, q) + DoW  mean d -0.0003  DM  -0.66  p 0.510  (NW lags 6)
   qlike    4 HAR (d, w, m) + DoW    vs 3 HAR (d, w, m)           mean d -0.0815  DM  -8.27  p 0.000  (NW lags 6)
   qlike    4 HAR (d, w, m) + DoW    vs 6 HAR (d, w, m, y) + DoW  mean d -0.0021  DM  -1.20  p 0.229  (NW lags 6)
+
+==== breakdown by target day, rolling window: model 3 (plain HAR) vs model 4 (+ DoW) ====
+err = y - yhat (positive: forecast too low).
+
+               n  MSE log 3  MSE log 4 change  mean err 3  mean err 4
+target year                                                          
+2024         365      0.131      0.075   -43%       0.022       0.020
+2025         365      0.141      0.079   -44%      -0.022      -0.019
+2026         273      0.133      0.068   -49%      -0.010      -0.007
+
+                  n  MSE log 3  MSE log 4 change  mean err 3  mean err 4
+target weekday                                                          
+Mon             143      0.138      0.073   -47%       0.262       0.000
+Tue             144      0.061      0.054   -11%       0.091      -0.007
+Wed             144      0.072      0.061   -14%       0.095      -0.019
+Thu             143      0.064      0.058    -8%       0.066       0.005
+Fri             143      0.104      0.094    -9%       0.095       0.020
+Sat             143      0.443      0.117   -74%      -0.569      -0.034
+Sun             143      0.067      0.065    -4%      -0.060       0.023
 
 
 5. ROLLING COEFFICIENT PATHS, HAR (d, w, m) + DoW (700-row fits; plot: phase2_coef_paths.png)
